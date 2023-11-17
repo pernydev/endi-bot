@@ -10,18 +10,10 @@ import (
 	"fmt"
 	"os"
 
-	"context"
-
 	"github.com/redis/go-redis/v9"
 
 	"endi/ai"
-)
-
-var (
-	discord *discordgo.Session
-	redisC  *redis.Client
-	ctx     = context.Background()
-	model   ai.Model
+	"endi/global"
 )
 
 func main() {
@@ -30,9 +22,9 @@ func main() {
 		fmt.Println("Error loading .env file")
 	}
 
-	discord, err = discordgo.New("Bot " + os.Getenv("TOKEN"))
+	global.Discord, err = discordgo.New("Bot " + os.Getenv("TOKEN"))
 	if err != nil {
-		fmt.Println("Error creating Discord session: ", err)
+		fmt.Println("Error creating global.Discord session: ", err)
 		return
 	}
 
@@ -42,9 +34,9 @@ func main() {
 		return
 	}
 
-	redisC = redis.NewClient(opts)
+	global.RedisC = redis.NewClient(opts)
 
-	// models should be a []*discordgo.ApplicationCommandOptionChoice but ai.Models is a map[string]ai.Model
+	// models should be a []*discordgo.ApplicationCommandOptionChoice but ai.global.Models is a map[string]ai.global.Model
 	models := make([]*discordgo.ApplicationCommandOptionChoice, len(ai.Models))
 	i := 0
 	for k, v := range ai.Models {
@@ -52,25 +44,25 @@ func main() {
 			Name:  v.Path + " (" + v.Author + ")",
 			Value: k,
 		}
-		fmt.Println("Model loaded: ", k)
+		fmt.Println("global.Model loaded: ", k)
 		i++
 	}
 
 	// check if the model is set
-	modelpath, err := redisC.Get(ctx, "active-model").Result()
+	modelpath, err := global.RedisC.Get(global.Ctx, "active-model").Result()
 	if err != nil {
 		fmt.Println("Error getting active model: ", err)
 	} else if modelpath == "" {
 		fmt.Println("No active model found")
 	} else {
-		model = ai.Models[modelpath]
+		global.Model = ai.Models[modelpath]
 		fmt.Println("Active model: ", modelpath)
 	}
 
 	commands := []*discordgo.ApplicationCommand{
 		{
 			Name:        "yhdistä-minecraft-tili",
-			Description: "Yhdista Minecraft-tili Discord tiliisi",
+			Description: "Yhdista Minecraft-tili global.Discord tiliisi",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Name:        "ign",
@@ -107,13 +99,13 @@ func main() {
 		"aseta-modeeli":          setModel,
 	}
 
-	discord.AddHandlerOnce(func(s *discordgo.Session, r *discordgo.Ready) {
+	global.Discord.AddHandlerOnce(func(s *discordgo.Session, r *discordgo.Ready) {
 		fmt.Println("Bot is ready!")
 		registeredCommands := make([]*discordgo.ApplicationCommand, len(commands))
 		for i, v := range commands {
 			fmt.Println("Registering command: ", v.Name)
-			cmd, err := discord.ApplicationCommandCreate(
-				discord.State.User.ID,
+			cmd, err := global.Discord.ApplicationCommandCreate(
+				global.Discord.State.User.ID,
 				"898265017927995422",
 				v,
 			)
@@ -122,7 +114,7 @@ func main() {
 			}
 			registeredCommands[i] = cmd
 		}
-		discord.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		global.Discord.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			fmt.Println("Command received: ", i.ApplicationCommandData().Name)
 			if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
 				fmt.Println("Command hadnling: ", i.ApplicationCommandData().Name)
@@ -134,7 +126,7 @@ func main() {
 		})
 	})
 
-	discord.AddHandler(func(s *discordgo.Session, i *discordgo.MessageCreate) {
+	global.Discord.AddHandler(func(s *discordgo.Session, i *discordgo.MessageCreate) {
 		if i.Author.Bot {
 			return
 		}
@@ -143,20 +135,20 @@ func main() {
 			return
 		}
 
-		if model.Path == "" {
-			discord.ChannelMessageSend(i.ChannelID, "> :warning: **No active model**")
+		if global.Model.Path == "" {
+			global.Discord.ChannelMessageSend(i.ChannelID, "> :warning: **No active model**")
 			return
 		}
 
 		// check if user has access to the AI beta
-		access, err := redisC.Get(ctx, "ai-beta-access:"+i.Author.ID).Result()
+		access, err := global.RedisC.Get(global.Ctx, "ai-beta-access:"+i.Author.ID).Result()
 		if err != nil || access != "true" {
-			redisC.Set(ctx, "ai-beta-access:"+i.Author.ID, "false", 0)
-			discord.ChannelMessageSend(i.ChannelID, "# ||***NOT�YET***||")
+			global.RedisC.Set(global.Ctx, "ai-beta-access:"+i.Author.ID, "false", 0)
+			global.Discord.ChannelMessageSend(i.ChannelID, "# ||***NOT�YET***||")
 			return
 		}
 		// get the past 5 messages
-		messages, err := discord.ChannelMessages(i.ChannelID, 5, i.ID, "", "")
+		messages, err := global.Discord.ChannelMessages(i.ChannelID, 5, i.ID, "", "")
 		if err != nil {
 			fmt.Println("Error getting messages: ", err)
 			return
@@ -164,22 +156,22 @@ func main() {
 
 		fmt.Println("Calling AI")
 		// get the response from the AI
-		response := ai.Call(model, messages)
+		response := ai.Call(global.Model, messages)
 
 		// send the response
-		_, err = discord.ChannelMessageSend(i.ChannelID, response)
+		_, err = global.Discord.ChannelMessageSend(i.ChannelID, response)
 		if err != nil {
 			fmt.Println("Error sending message: ", err)
 		}
 	})
 
-	err = discord.Open()
+	err = global.Discord.Open()
 	if err != nil {
 		fmt.Println("Error opening connection: ", err)
 		return
 	}
 
-	defer discord.Close()
+	defer global.Discord.Close()
 
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 
@@ -202,7 +194,7 @@ func linkMinecraftAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	//lowercasify ign
 	ign = strings.ToLower(ign)
 
-	redisC.Set(ctx, "ign:"+i.Member.User.ID, ign, 0)
+	global.RedisC.Set(global.Ctx, "ign:"+i.Member.User.ID, ign, 0)
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -213,16 +205,16 @@ func linkMinecraftAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 }
 
 func toggleAIBeta(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	currentAccess, err := redisC.Get(ctx, "ai-beta-access:"+i.Member.User.ID).Result()
+	currentAccess, err := global.RedisC.Get(global.Ctx, "ai-beta-access:"+i.Member.User.ID).Result()
 	str := "asetettu"
 	if err != nil {
-		redisC.Set(ctx, "ai-beta-access:"+i.Member.User.ID, "true", 0)
+		global.RedisC.Set(global.Ctx, "ai-beta-access:"+i.Member.User.ID, "true", 0)
 		str = "saalittu"
 	} else if currentAccess == "true" {
-		redisC.Set(ctx, "ai-beta-access:"+i.Member.User.ID, "false", 0)
+		global.RedisC.Set(global.Ctx, "ai-beta-access:"+i.Member.User.ID, "false", 0)
 		str = "estetty"
 	} else {
-		redisC.Set(ctx, "ai-beta-access:"+i.Member.User.ID, "true", 0)
+		global.RedisC.Set(global.Ctx, "ai-beta-access:"+i.Member.User.ID, "true", 0)
 		str = "saalittu"
 	}
 
@@ -246,17 +238,17 @@ func setModel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	modelpath := optionMap["modeeli"].StringValue()
 
-	fmt.Println(model)
+	fmt.Println(global.Model)
 
 	//lowercasify ign
-	model = ai.Models[modelpath]
+	global.Model = ai.Models[modelpath]
 
-	redisC.Set(ctx, "active-model", modelpath, 0)
+	global.RedisC.Set(global.Ctx, "active-model", modelpath, 0)
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: "Model asetettu!",
+			Content: "global.Model asetettu!",
 		},
 	})
 }
