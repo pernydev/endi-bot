@@ -5,5 +5,9 @@ import (
 )
 
 func Call(model Model, messages []*discordgo.Message) string {
-	return model.Platform.Handler(model, messages)
+	// check if the model has a platform handler
+	if model.Platform.Handler != nil {
+		return model.Platform.Handler(model, messages)
+	}
+	return "> :warning: **Invalid model**"
 }

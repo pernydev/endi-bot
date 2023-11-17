@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -18,7 +17,7 @@ func OpenAICall(model Model, recentMessages []*discordgo.Message) string {
 	}
 	for _, message := range recentMessages {
 		if message.Author.ID == os.Getenv("BOT_ID") {
-			messages = append(messages, openai.ChatCompletionMessage{Content: "Endi AI: " + message.Content, Role: "assistant"})
+			messages = append(messages, openai.ChatCompletionMessage{Content: model.Prefix + message.Content, Role: "assistant"})
 		}
 		messages = append(messages, openai.ChatCompletionMessage{Content: strings.Split(message.Author.String(), "#")[0] + ": " + message.Content, Role: "user"})
 	}
@@ -34,16 +33,21 @@ func OpenAICall(model Model, recentMessages []*discordgo.Message) string {
 		return ""
 	}
 
-	// if text does not start with "Endi AI: "
-	if !strings.HasPrefix(resp.Choices[0].Message.Content, "Endi AI: ") {
-		fmt.Println("Error calling OpenAI: ", resp.Choices[0].Message.Content)
-		return OpenAICall(model, recentMessages)
+	// check if it doesn't begin with the prefix
+	if !strings.HasPrefix(resp.Choices[0].Message.Content, model.Prefix) {
+		messages = append(messages, openai.ChatCompletionMessage{Content: "API ERROR: 403 Forbidden. You do not own that username. Please use \"endi\" instead", Role: "system"})
+		resp, err = client.CreateChatCompletion(
+			context.Background(),
+			openai.ChatCompletionRequest{
+				Model:    model.Identifier,
+				Messages: messages,
+			},
+		)
+		if err != nil {
+			fmt.Println("Error calling OpenAI: ", err)
+			return ""
+		}
 	}
 
-	if matched, err := regexp.MatchString(`\b[a-z]+\:\s`, resp.Choices[0].Message.Content); err != nil || matched {
-		fmt.Println("Error calling OpenAI: ", resp.Choices[0].Message.Content)
-		return OpenAICall(model, recentMessages)
-	}
-
-	return strings.ReplaceAll(resp.Choices[0].Message.Content, "Endi AI: ", "")
+	return strings.TrimPrefix(resp.Choices[0].Message.Content, model.Prefix)
 }
