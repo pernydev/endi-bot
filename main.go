@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -14,6 +16,7 @@ import (
 
 	"endi/ai"
 	"endi/global"
+	"endi/voice"
 )
 
 func main() {
@@ -78,6 +81,14 @@ func main() {
 			Type: discordgo.UserApplicationCommand,
 		},
 		{
+			Name: "Revoke AI Access",
+			Type: discordgo.UserApplicationCommand,
+		},
+		{
+			Name: "join",
+			Type: discordgo.UserApplicationCommand,
+		},
+		{
 			Name:        "aseta-modeeli",
 			Description: "Aseta käytettävä modeeli",
 			Options: []*discordgo.ApplicationCommandOption{
@@ -97,6 +108,8 @@ func main() {
 		"yhdistä-minecraft-tili": linkMinecraftAccount,
 		"toggle AI beta":         toggleAIBeta,
 		"aseta-modeeli":          setModel,
+		"join":                   voice.JoinVC,
+		"Revoke AI Access":       RevokeAccess,
 	}
 
 	global.Discord.AddHandlerOnce(func(s *discordgo.Session, r *discordgo.Ready) {
@@ -124,6 +137,17 @@ func main() {
 				fmt.Println("Command not handled: ", i.ApplicationCommandData().Name)
 			}
 		})
+
+		global.Discord.UpdateStatusComplex(discordgo.UpdateStatusData{
+			Activities: []*discordgo.Activity{
+				{
+					Type:    discordgo.ActivityTypeCustom,
+					Details: "Beta! Using " + global.Model.Path + "by" + global.Model.Author + ".",
+				},
+			},
+			Status: "online",
+		},
+		)
 	})
 
 	global.Discord.AddHandler(func(s *discordgo.Session, i *discordgo.MessageCreate) {
@@ -131,7 +155,7 @@ func main() {
 			return
 		}
 
-		if len(i.Mentions) == 0 || i.Mentions[0].ID != os.Getenv("BOT_ID") {
+		if i.ChannelID != "1174800328126910527" {
 			return
 		}
 
@@ -147,6 +171,35 @@ func main() {
 			global.Discord.ChannelMessageSend(i.ChannelID, "# ||***NOT�YET***||")
 			return
 		}
+
+		denied, err := global.RedisC.Get(global.Ctx, "ai-deny-access:"+i.Author.ID).Result()
+		if err == nil {
+			if denied == "temporary" {
+				// remove the message
+				global.Discord.ChannelMessageDelete(i.ChannelID, i.ID)
+
+				// send a dm
+				channel, err := global.Discord.UserChannelCreate(i.Author.ID)
+				if err != nil {
+					fmt.Println("Error creating dm channel: ", err)
+				}
+				global.Discord.ChannelMessageSend(channel.ID, "> :warning: **You are sending messages too fast. Please wait a few seconds before sending another message.**")
+				return
+			}
+
+			// remove the message
+			global.Discord.ChannelMessageDelete(i.ChannelID, i.ID)
+			return
+		}
+		s.ChannelTyping(i.ChannelID)
+
+		if len(i.Content) > 100 {
+			return
+		}
+
+		i.Content = formatMessage(s, *i.Message)
+		fmt.Println(i.Content)
+
 		// get the past 5 messages
 		messages, err := global.Discord.ChannelMessages(i.ChannelID, 5, i.ID, "", "")
 		if err != nil {
@@ -154,15 +207,43 @@ func main() {
 			return
 		}
 
+		for _, message := range messages {
+			if len(message.Content) > 100 {
+				message.Content = message.Content[:20]
+			}
+
+			message.Content = formatMessage(s, *message)
+		}
+
+		messages = append(messages, i.Message)
+
 		fmt.Println("Calling AI")
 		// get the response from the AI
 		response := ai.Call(global.Model, messages)
 
+		// convert the response into a discord format
+
+		// replace ai mention format (<@username>) with discord mention format (<@userid>)
+		re := regexp.MustCompile(`<@(\d+)>`)
+		matches := re.FindAllStringSubmatch(response, -1)
+
+		// replace all mentions with <@username>
+		for _, match := range matches {
+			user, err := s.User(match[1])
+			if err != nil {
+				fmt.Println("Error getting user: ", err)
+				continue
+			}
+			response = strings.ReplaceAll(response, match[0], "<@"+user.ID+">")
+		}
+
 		// send the response
-		_, err = global.Discord.ChannelMessageSend(i.ChannelID, response)
+		_, err = global.Discord.ChannelMessageSendReply(i.ChannelID, response, i.Reference())
 		if err != nil {
 			fmt.Println("Error sending message: ", err)
 		}
+
+		global.RedisC.Set(global.Ctx, "ai-deny-access:"+i.Author.ID, "temporary", time.Second*7)
 	})
 
 	err = global.Discord.Open()
@@ -205,7 +286,7 @@ func linkMinecraftAccount(s *discordgo.Session, i *discordgo.InteractionCreate) 
 }
 
 func toggleAIBeta(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	currentAccess, err := global.RedisC.Get(global.Ctx, "ai-beta-access:"+i.Member.User.ID).Result()
+	currentAccess, err := global.RedisC.Get(global.Ctx, "ai-beta-access:"+i.ApplicationCommandData().TargetID).Result()
 	str := "asetettu"
 	if err != nil {
 		global.RedisC.Set(global.Ctx, "ai-beta-access:"+i.Member.User.ID, "true", 0)
@@ -245,10 +326,57 @@ func setModel(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	global.RedisC.Set(global.Ctx, "active-model", modelpath, 0)
 
+	global.Discord.UpdateStatusComplex(discordgo.UpdateStatusData{
+		Activities: []*discordgo.Activity{
+			{
+				Type:    discordgo.ActivityTypeCustom,
+				Details: "Beta! Using " + global.Model.Path + "by" + global.Model.Author + ".",
+			},
+		},
+		Status: "online",
+	},
+	)
+
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: "global.Model asetettu!",
+		},
+	})
+}
+
+func formatMessage(s *discordgo.Session, message discordgo.Message) string {
+	if len(message.Attachments) > 0 {
+		for _, attachment := range message.Attachments {
+			message.Content = message.Content + "\nLiitetiedosto: " + attachment.URL
+		}
+	}
+
+	// find all mentions with <@(\d+)>
+	re := regexp.MustCompile(`<@(\d+)>`)
+	matches := re.FindAllStringSubmatch(message.Content, -1)
+
+	// replace all mentions with <@username>
+	for _, match := range matches {
+		user, err := s.User(match[1])
+		if err != nil {
+			fmt.Println("Error getting user: ", err)
+			continue
+		}
+		message.Content = strings.ReplaceAll(message.Content, match[0], "<@"+user.Username+">")
+	}
+
+	return message.Content
+}
+
+func RevokeAccess(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	global.RedisC.Set(global.Ctx, "ai-deny-access:"+i.ApplicationCommandData().TargetID, "true", 0)
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "> :warning: **AI access revoked**",
+			Flags:   discordgo.MessageFlagsEphemeral,
 		},
 	})
 }

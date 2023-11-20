@@ -72,13 +72,13 @@ var Models = map[string]Model{
 		Identifier:   "ft:gpt-3.5-turbo-0613:personal::8LngQ8bE",
 		Prefix:       "endi: ",
 	},
-	"openai.gpt-3.5-turbo": {
-		Path:         "openai.gpt-3.5-turbo",
+	"openai.gpt-4-turbo": {
+		Path:         "openai.gpt-4-turbo",
 		Author:       "OpenAI",
 		Contributors: []string{"OpenAI"},
 		License:      "none",
 		Platform:     Platforms["openai-chatcompletions"],
-		Identifier:   "gpt-3.5-turbo",
+		Identifier:   "gpt-4-turbo",
 		Prefix:       "Endi: ",
 	},
 }
