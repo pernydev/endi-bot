@@ -30,6 +30,8 @@ require (
 	github.com/redis/go-redis/v9 v9.2.1 // indirect
 	github.com/sashabaranov/go-openai v1.17.7 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
+	github.com/supabase-community/supabase-go v0.0.1 // indirect
+	github.com/supabase/postgrest-go v0.0.7 // indirect
 	golang.org/x/crypto v0.12.0 // indirect
 	golang.org/x/net v0.14.0 // indirect
 	golang.org/x/sys v0.11.0 // indirect
